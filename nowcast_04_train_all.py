@@ -64,20 +64,24 @@ print(f"X_val:   {X_val.shape}")
 PAD = (6, 7, 5, 6)  # (left, right, top, bottom) → 371→384, 501→512
 
 class RadarDataset(Dataset):
-    def __init__(self, X, Y):
-        self.X = torch.from_numpy(X)
-        self.Y = torch.from_numpy(Y)
+    def __init__(self, X, Y, augment=False):
+        self.X       = torch.from_numpy(X)
+        self.Y       = torch.from_numpy(Y)
+        self.augment = augment
 
     def __len__(self):
         return len(self.X)
 
     def __getitem__(self, i):
         x = F.pad(self.X[i], PAD)
-        y = self.Y[i]               # keep target as original size
+        y = self.Y[i]
+        if self.augment and torch.rand(1) > 0.5:
+            x = torch.flip(x, [-1])
+            y = torch.flip(y, [-1])
         return x, y
 
-train_dataset = RadarDataset(X_train, Y_train)
-val_dataset   = RadarDataset(X_val,   Y_val)
+train_dataset = RadarDataset(X_train, Y_train, augment=True)
+val_dataset   = RadarDataset(X_val,   Y_val,   augment=False)
 
 train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True,
                           num_workers=NUM_WORKERS, pin_memory=True)
@@ -101,12 +105,13 @@ print("y:", y_batch.shape)
 # MODEL
 # ============================================================
 class DoubleConv(nn.Module):
-    def __init__(self, in_ch, out_ch):
+    def __init__(self, in_ch, out_ch, dropout=0.1):
         super().__init__()
         self.block = nn.Sequential(
             nn.Conv2d(in_ch, out_ch, 3, padding=1, bias=False),
             nn.BatchNorm2d(out_ch),
             nn.ReLU(inplace=True),
+            nn.Dropout2d(dropout),
             nn.Conv2d(out_ch, out_ch, 3, padding=1, bias=False),
             nn.BatchNorm2d(out_ch),
             nn.ReLU(inplace=True),
@@ -161,9 +166,9 @@ class UNet(nn.Module):
         x = F.relu(x)                  # non-negative predictions
         return x[:, :, 5:506, 6:377]  # crop back to (501, 371)
 
-model     = UNet().to(DEVICE)
+model     = UNet(features=[32, 64, 128, 256]).to(DEVICE)
 criterion = nn.MSELoss()
-optimizer = torch.optim.Adam(model.parameters(), lr=LR)
+optimizer = torch.optim.Adam(model.parameters(), lr=LR, weight_decay=1e-4)
 
 print(f"Parameters: {sum(p.numel() for p in model.parameters()):,}")
 
@@ -240,14 +245,15 @@ for epoch in range(1, NUM_EPOCHS + 1):
     # --------------------------------------------------------
     # CHECKPOINTING
     # --------------------------------------------------------
-    # Save every epoch
-    torch.save({
-        "epoch":           epoch,
-        "model_state":     model.state_dict(),
-        "optimizer_state": optimizer.state_dict(),
-        "train_loss":      train_loss,
-        "val_loss":        val_loss,
-    }, CKPT_DIR / f"checkpoint_epoch_{epoch:03d}.pt")
+    # Save every 5 epochs
+    if epoch % 5 == 0:
+        torch.save({
+            "epoch":           epoch,
+            "model_state":     model.state_dict(),
+            "optimizer_state": optimizer.state_dict(),
+            "train_loss":      train_loss,
+            "val_loss":        val_loss,
+        }, CKPT_DIR / f"checkpoint_epoch_{epoch:03d}.pt")
 
     # Save best model separately
     if is_best:
