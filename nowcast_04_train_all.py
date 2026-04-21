@@ -10,9 +10,10 @@ import json
 # ============================================================
 # CONFIG
 # ============================================================
-DATA_DIR  = Path("/store_new/mch/msclim/antoumos/R/develop/NOWPRECIP/new_project/radar_data")
-CKPT_DIR  = Path("/store_new/mch/msclim/antoumos/R/develop/NOWPRECIP/new_project/checkpoints")
-LOG_DIR   = Path("/store_new/mch/msclim/antoumos/R/develop/NOWPRECIP/new_project/logs")
+_HERE     = Path(__file__).parent
+DATA_DIR  = _HERE / "radar_data"
+CKPT_DIR  = _HERE / "checkpoints"
+LOG_DIR   = _HERE / "logs"
 CKPT_DIR.mkdir(exist_ok=True, parents= True)
 LOG_DIR.mkdir(exist_ok=True, parents = True)
 
@@ -21,7 +22,7 @@ NUM_EPOCHS  = 50
 LR          = 1e-4
 NUM_WORKERS = 4
 DEVICE      = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-RUN_NAME    = "wmse_linear"   # change per run, e.g. "mse_baseline", "wmse_linear", "wmse_sq"
+RUN_NAME    = "wl1_linear"    # change per run, e.g. "mse_baseline", "wmse_linear", "wl1_linear"
 
 print(f"Device:     {DEVICE}")
 print(f"Batch size: {BATCH_SIZE}")
@@ -168,9 +169,15 @@ class UNet(nn.Module):
         return x[:, :, 5:506, 6:377]  # crop back to (501, 371)
 
 def weighted_mse(pred, target):
-    # target is in log1p space; recover original intensity for weighting
     w = (1.0 + torch.expm1(target)) ** 1
     return (w * (pred - target) ** 2).mean()
+
+def weighted_l1(pred, target):
+    # L1 penalises residuals linearly → less regression-to-mean → sharper predictions
+    w = (1.0 + torch.expm1(target)) ** 1
+    return (w * torch.abs(pred - target)).mean()
+
+LOSS_FN = weighted_l1   # swap to weighted_mse to revert
 
 model     = UNet(features=[32, 64, 128, 256]).to(DEVICE)
 optimizer = torch.optim.Adam(model.parameters(), lr=LR, weight_decay=1e-4)
@@ -208,7 +215,7 @@ for epoch in range(1, NUM_EPOCHS + 1):
 
         optimizer.zero_grad()
         pred = model(x_b)
-        loss = weighted_mse(pred, y_b)
+        loss = LOSS_FN(pred, y_b)
         loss.backward()
         optimizer.step()
 
@@ -228,7 +235,7 @@ for epoch in range(1, NUM_EPOCHS + 1):
             y_b = y_b.to(DEVICE)
 
             pred     = model(x_b)
-            val_loss += weighted_mse(pred, y_b).item()
+            val_loss += LOSS_FN(pred, y_b).item()
 
     val_loss /= len(val_loader)
 

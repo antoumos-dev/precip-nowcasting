@@ -1,2 +1,10 @@
 radar_data/
-radar_data/
+!radar_data/*.csv
+checkpoints/
+logs/
+test_output/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+*.egg-info/
+.env

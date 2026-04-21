@@ -10,11 +10,12 @@ import matplotlib.pyplot as plt
 # ============================================================
 # CONFIG
 # ============================================================
-DATA_DIR  = Path("/store_new/mch/msclim/antoumos/R/develop/NOWPRECIP/new_project/radar_data")
-CKPT_DIR  = Path("/store_new/mch/msclim/antoumos/R/develop/NOWPRECIP/new_project/checkpoints")
-OUT_DIR   = Path("/store_new/mch/msclim/antoumos/R/develop/NOWPRECIP/new_project/test_output")
+_HERE     = Path(__file__).parent
+DATA_DIR  = _HERE / "radar_data"
+CKPT_DIR  = _HERE / "checkpoints"
+OUT_DIR   = _HERE / "test_output"
 
-RUN_NAME   = "wmse_linear"   # must match training run
+RUN_NAME   = "wl1_linear"    # must match training run
 BATCH_SIZE = 8
 DEVICE     = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 PAD        = (6, 7, 5, 6)
