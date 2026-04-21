@@ -1,11 +1,11 @@
 #!/bin/bash
-#SBATCH --partition=debug
-#SBATCH --time=00:30:00
+#SBATCH --partition=normal
+#SBATCH --time=24:00:00
 #SBATCH --gres=gpu:1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
-#SBATCH --mem=64G
-#SBATCH --job-name=nowcast_test
+#SBATCH --mem=128G
+#SBATCH --job-name=unet_test
 #SBATCH --output=/store_new/mch/msclim/antoumos/R/develop/NOWPRECIP/new_project/logs/test_%j.out
 #SBATCH --error=/store_new/mch/msclim/antoumos/R/develop/NOWPRECIP/new_project/logs/test_%j.err
 
@@ -17,4 +17,4 @@ nvidia-smi
 python -c "import torch; print('CUDA:', torch.cuda.is_available())"
 
 # Run test script
-python /store_new/mch/msclim/antoumos/R/develop/NOWPRECIP/new_project/nowcast_03_train.py
+python /store_new/mch/msclim/antoumos/R/develop/NOWPRECIP/new_project/nowcast_05_test.py

@@ -21,6 +21,7 @@ NUM_EPOCHS  = 50
 LR          = 1e-4
 NUM_WORKERS = 4
 DEVICE      = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+RUN_NAME    = "wmse_linear"   # change per run, e.g. "mse_baseline", "wmse_linear", "wmse_sq"
 
 print(f"Device:     {DEVICE}")
 print(f"Batch size: {BATCH_SIZE}")
@@ -166,8 +167,12 @@ class UNet(nn.Module):
         x = F.relu(x)                  # non-negative predictions
         return x[:, :, 5:506, 6:377]  # crop back to (501, 371)
 
+def weighted_mse(pred, target):
+    # target is in log1p space; recover original intensity for weighting
+    w = (1.0 + torch.expm1(target)) ** 1
+    return (w * (pred - target) ** 2).mean()
+
 model     = UNet(features=[32, 64, 128, 256]).to(DEVICE)
-criterion = nn.MSELoss()
 optimizer = torch.optim.Adam(model.parameters(), lr=LR, weight_decay=1e-4)
 
 print(f"Parameters: {sum(p.numel() for p in model.parameters()):,}")
@@ -203,7 +208,7 @@ for epoch in range(1, NUM_EPOCHS + 1):
 
         optimizer.zero_grad()
         pred = model(x_b)
-        loss = criterion(pred, y_b)
+        loss = weighted_mse(pred, y_b)
         loss.backward()
         optimizer.step()
 
@@ -223,7 +228,7 @@ for epoch in range(1, NUM_EPOCHS + 1):
             y_b = y_b.to(DEVICE)
 
             pred     = model(x_b)
-            val_loss += criterion(pred, y_b).item()
+            val_loss += weighted_mse(pred, y_b).item()
 
     val_loss /= len(val_loader)
 
@@ -253,7 +258,7 @@ for epoch in range(1, NUM_EPOCHS + 1):
             "optimizer_state": optimizer.state_dict(),
             "train_loss":      train_loss,
             "val_loss":        val_loss,
-        }, CKPT_DIR / f"checkpoint_epoch_{epoch:03d}.pt")
+        }, CKPT_DIR / f"{RUN_NAME}_checkpoint_epoch_{epoch:03d}.pt")
 
     # Save best model separately
     if is_best:
@@ -261,14 +266,14 @@ for epoch in range(1, NUM_EPOCHS + 1):
             "epoch":       epoch,
             "model_state": model.state_dict(),
             "val_loss":    val_loss,
-        }, CKPT_DIR / "best_model.pt")
+        }, CKPT_DIR / f"best_model_{RUN_NAME}.pt")
         
     # Save loss log every epoch
     pd.DataFrame({
         "epoch":      list(range(1, epoch + 1)),
         "train_loss": train_losses,
         "val_loss":   val_losses,
-    }).to_csv(LOG_DIR / "losses.csv", index=False)
+    }).to_csv(LOG_DIR / f"losses_{RUN_NAME}.csv", index=False)
 
     # --------------------------------------------------------
     # EARLY STOPPING

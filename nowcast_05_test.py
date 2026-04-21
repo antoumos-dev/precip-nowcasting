@@ -13,11 +13,14 @@ import matplotlib.pyplot as plt
 DATA_DIR  = Path("/store_new/mch/msclim/antoumos/R/develop/NOWPRECIP/new_project/radar_data")
 CKPT_DIR  = Path("/store_new/mch/msclim/antoumos/R/develop/NOWPRECIP/new_project/checkpoints")
 OUT_DIR   = Path("/store_new/mch/msclim/antoumos/R/develop/NOWPRECIP/new_project/test_output")
-OUT_DIR.mkdir(exist_ok=True, parents=True)
 
+RUN_NAME   = "wmse_linear"   # must match training run
 BATCH_SIZE = 8
 DEVICE     = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 PAD        = (6, 7, 5, 6)
+
+RUN_OUT_DIR = OUT_DIR / RUN_NAME
+RUN_OUT_DIR.mkdir(exist_ok=True, parents=True)
 
 # ============================================================
 # MODEL (must match training)
@@ -104,16 +107,17 @@ X_test_pad = torch.stack([F.pad(x, PAD) for x in X_test_pad])
 Y_test_t   = torch.from_numpy(Y_test)
 
 loader = DataLoader(TensorDataset(X_test_pad, Y_test_t),
-                    batch_size=BATCH_SIZE, shuffle=False)
+                    batch_size=BATCH_SIZE, shuffle=False,
+                    num_workers=4, pin_memory=True)
 
 # ============================================================
 # LOAD MODEL
 # ============================================================
 model = UNet().to(DEVICE)
-ckpt  = torch.load(CKPT_DIR / "best_model.pt", map_location=DEVICE)
+ckpt  = torch.load(CKPT_DIR / f"best_model_{RUN_NAME}.pt", map_location=DEVICE, weights_only=True)
 model.load_state_dict(ckpt["model_state"])
 model.eval()
-print(f"Loaded best model from epoch {ckpt['epoch']} (val loss {ckpt['val_loss']:.6f})")
+print(f"Loaded best model '{RUN_NAME}' from epoch {ckpt['epoch']} (val loss {ckpt['val_loss']:.6f})")
 
 # ============================================================
 # INFERENCE
@@ -129,7 +133,7 @@ with torch.no_grad():
 preds_log = torch.cat(preds_log).numpy()   # (N, 1, 501, 371)
 trues_log = torch.cat(trues_log).numpy()
 
-# Convert to mm/h
+# Convert to mm/10min
 preds_mmh = np.expm1(preds_log)
 trues_mmh = np.expm1(trues_log)
 
@@ -138,10 +142,30 @@ trues_mmh = np.expm1(trues_log)
 # ============================================================
 mae  = np.mean(np.abs(preds_mmh - trues_mmh))
 rmse = np.sqrt(np.mean((preds_mmh - trues_mmh) ** 2))
-print(f"\nMAE  (mm/h): {mae:.4f}")
-print(f"RMSE (mm/h): {rmse:.4f}")
 
-pd.DataFrame({"mae": [mae], "rmse": [rmse]}).to_csv(OUT_DIR / "metrics.csv", index=False)
+thresholds = [0.1, 0.2, 0.5, 1.0]
+csi_results = {}
+
+for thr in thresholds:
+    tp   = np.sum((preds_mmh >= thr) & (trues_mmh >= thr))
+    fp   = np.sum((preds_mmh >= thr) & (trues_mmh <  thr))
+    fn   = np.sum((preds_mmh <  thr) & (trues_mmh >= thr))
+    csi  = tp / (tp + fp + fn) if (tp + fp + fn) > 0 else float("nan")
+    csi_results[thr] = csi
+
+print(f"\nMAE  (mm/10min): {mae:.4f}")
+print(f"RMSE (mm/10min): {rmse:.4f}")
+for thr, csi in csi_results.items():
+    print(f"CSI  @{thr}mm/10min: {csi:.4f}")
+
+pd.DataFrame({
+    "run":        [RUN_NAME],
+    "mae":        [mae],
+    "rmse":       [rmse],
+    "csi_0.1mmh": [csi_results[0.1]],
+    "csi_0.5mmh": [csi_results[0.5]],
+    "csi_1.0mmh": [csi_results[1.0]],
+}).to_csv(RUN_OUT_DIR / f"metrics_{RUN_NAME}.csv", index=False)
 
 # ============================================================
 # PLOT: first 4 test cases
@@ -149,15 +173,15 @@ pd.DataFrame({"mae": [mae], "rmse": [rmse]}).to_csv(OUT_DIR / "metrics.csv", ind
 n_plot = min(4, len(preds_mmh))
 vmax   = np.percentile(trues_mmh[:n_plot], 99)
 
-fig, axes = plt.subplots(n_plot, 2, figsize=(8, 3 * n_plot))
+fig, axes = plt.subplots(n_plot, 2, figsize=(8, 3 * n_plot), squeeze=False)
 for i in range(n_plot):
     axes[i, 0].imshow(trues_mmh[i, 0], vmin=0, vmax=vmax, cmap="Blues")
-    axes[i, 0].set_title(f"Observed [{i}]")
+    axes[i, 0].set_title(f"Observed [{i}] (mm/10min)")
     axes[i, 0].axis("off")
     axes[i, 1].imshow(preds_mmh[i, 0], vmin=0, vmax=vmax, cmap="Blues")
-    axes[i, 1].set_title(f"Predicted [{i}]")
+    axes[i, 1].set_title(f"Predicted [{i}] (mm/10min)")
     axes[i, 1].axis("off")
 
 plt.tight_layout()
-plt.savefig(OUT_DIR / "test_cases.png", dpi=150)
-print(f"\nPlot saved to {OUT_DIR / 'test_cases.png'}")
+plt.savefig(RUN_OUT_DIR / f"test_cases_{RUN_NAME}.png", dpi=150)
+print(f"\nPlot saved to {RUN_OUT_DIR / f'test_cases_{RUN_NAME}.png'}")
