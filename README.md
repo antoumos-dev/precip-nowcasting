@@ -8,6 +8,8 @@ Deep learning model for radar-based precipitation nowcasting at **+30 min lead t
 
 Predicting where and how much it will rain 30 minutes ahead is a core challenge in operational meteorology. Classical optical-flow methods (e.g. pysteps) extrapolate current patterns but struggle with convective initiation and decay. This project trains a U-Net to learn the mapping directly from recent radar frames to a future frame.
 
+Convolutional architectures are well-suited for this task because radar composites are inherently spatial: precipitation patterns have local structure and translational regularity that convolutions can exploit efficiently. The U-Net in particular combines an encoder branch — which progressively reduces spatial resolution while increasing feature depth to capture large-scale patterns — with a decoder branch that restores spatial resolution using skip connections from the encoder. This allows the model to simultaneously reason about broad precipitation systems and fine-scale local structure, which is critical for accurate spatial placement of rain at short lead times.
+
 ---
 
 ## Approach
