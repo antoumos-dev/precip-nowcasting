@@ -38,18 +38,22 @@ where `R = expm1(target)` is the rain rate in mm/10min, so heavy rain events con
 ## Repository structure
 
 ```
-├── nowcast_01_preprocessing.ipynb   # raw radar → npz samples
-├── nowcast_02_enrich_split.ipynb    # temporal train/val/test split + metadata
-├── nowcast_03_train.ipynb           # initial prototype (single-GPU, small data)
-├── nowcast_04_train_all.py          # full training script (SLURM)
+├── notebooks
+    ├── nowcast_01_preprocessing.ipynb   # raw radar → npz samples
+    ├── nowcast_02_enrich_split.ipynb    # temporal train/val/test split + metadata
+    └── nowcast_03_train.ipynb           # initial prototype (single-GPU, small data)
+├── nowcast_04_train.py          # full training script (SLURM)
 ├── nowcast_05_test.py               # inference + metrics on held-out test set
-├── radar_data/
+├── data/
 │   ├── phase2_samples_meta.csv           # event metadata
 │   └── phase2_samples_meta_enriched.csv  # metadata with train/val/test split
+├── radar_data/                          # raw radar data (not tracked — MeteoSwiss, not public)
 ├── scripts/
 │   ├── run_train.sh                 # SLURM job for training
 │   └── run_test.sh                  # SLURM job for evaluation
-└── figures/                         # sample output plots (committed)
+├── figures/                         # sample output plots 
+│ 
+└── utils/                           # helpers to be added
 ```
 
 ---
@@ -60,17 +64,17 @@ Evaluation on held-out test set. Best configuration: **weighted L1 loss** with l
 
 | Metric | U-Net | Persistence |
 |---|---|---|
-| MAE (mm/10min) | — | — |
-| RMSE (mm/10min) | — | — |
-| CSI @ 0.1 mm/10min | — | — |
-| CSI @ 0.5 mm/10min | — | — |
-| CSI @ 1.0 mm/10min | — | — |
-| FSS @ 0.1 mm/10min, 8 px | — | — |
-| FSS @ 0.1 mm/10min, 32 px | — | — |
-| FSS @ 0.5 mm/10min, 8 px | — | — |
-| FSS @ 0.5 mm/10min, 32 px | — | — |
-| FSS @ 1.0 mm/10min, 8 px | — | — |
-| FSS @ 1.0 mm/10min, 32 px | — | — |
+| MAE (mm/10min) | **0.05** | 0.08 |
+| RMSE (mm/10min) | **0.33** | 0.49 |
+| CSI @ 0.1 mm/10min | **0.64** | 0.47 |
+| CSI @ 0.5 mm/10min | **0.41** | 0.24 |
+| CSI @ 1.0 mm/10min | **0.29** | 0.13 |
+| FSS @ 0.1 mm/10min, 8 px | **0.88** | 0.75 |
+| FSS @ 0.1 mm/10min, 32 px | **0.94** | 0.90 |
+| FSS @ 0.5 mm/10min, 8 px | **0.59** | 0.52 |
+| FSS @ 0.5 mm/10min, 32 px | 0.67 | **0.76** |
+| FSS @ 1.0 mm/10min, 8 px | **0.39** | 0.35 |
+| FSS @ 1.0 mm/10min, 32 px | 0.47 | **0.61** |
 
 Preliminary results in figures/ show the model captures the overall spatial structure of precipitation fields, but predictions are smoother than observed — fine-scale intensity peaks are underestimated, a common trait of pixel-wise loss functions.
 
@@ -129,4 +133,6 @@ Tested on:
 
 ## Data
 
-MeteoSwiss radar composite data. Not publicly available — contact MeteoSwiss for access.
+MeteoSwiss radar composite data ('phase2_samples.npz'). Not publicly available — contact MeteoSwiss for access.
+
+The event metadata and train/val/test split (`phase2_samples_meta.csv`, `phase2_samples_meta_enriched.csv`) are included in this repository to allow full reproducibility of the split for anyone with access to the raw data.
