@@ -23,7 +23,7 @@ LR              = 1e-4
 NUM_WORKERS     = 4
 WEIGHT_EXPONENT = 1   # >1 = more focus on heavy rain, <1 = less
 DEVICE      = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-RUN_NAME    = "wl1_linear"    # change per run, e.g. "mse_baseline", "wmse_linear", "wl1_linear"
+RUN_NAME    = "wl1_spectral"  # change per run, e.g. "mse_baseline", "wmse_linear", "wl1_linear"
 
 print(f"Device:     {DEVICE}")
 print(f"Batch size: {BATCH_SIZE}")
@@ -178,7 +178,19 @@ def weighted_l1(pred, target):
     w = (1.0 + torch.expm1(target)) ** WEIGHT_EXPONENT
     return (w * torch.abs(pred - target)).mean()
 
-LOSS_FN = weighted_l1   # swap to weighted_mse to revert
+def spectral_loss(pred, target, eps=1e-8):
+    """Logarithmic Spectral Distance: penalises power-spectrum mismatch to reduce blurring."""
+    P_pred = torch.abs(torch.fft.fft2(pred)) ** 2   # (B, 1, H, W)
+    P_true = torch.abs(torch.fft.fft2(target)) ** 2
+    log_ratio = 10.0 * torch.log10((P_true + eps) / (P_pred + eps))
+    return torch.sqrt((log_ratio ** 2).mean())
+
+LAMBDA_SPEC = 0.01  # tuned: balances L1 (~0.07) and LSD (~9.5 dB) contributions
+
+def combined_loss(pred, target):
+    return weighted_l1(pred, target) + LAMBDA_SPEC * spectral_loss(pred, target)
+
+LOSS_FN = combined_loss
 
 model     = UNet(features=[32, 64, 128, 256]).to(DEVICE)
 optimizer = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=1e-4)
@@ -199,8 +211,8 @@ patience         = 10            # stop if no improvement for 10 epochs
 epochs_no_improve = 0            # counter
 
 print("\nStarting training...")
-print(f"{'Epoch':>6} {'Train Loss':>12} {'Val Loss':>12} {'Best':>6}")
-print("-" * 40)
+print(f"{'Epoch':>6} {'Train Loss':>12} {'L1':>10} {'LSD':>10} {'Val Loss':>12} {'Best':>6}")
+print("-" * 64)
 
 for epoch in range(1, NUM_EPOCHS + 1):
 
@@ -209,6 +221,8 @@ for epoch in range(1, NUM_EPOCHS + 1):
     # --------------------------------------------------------
     model.train()
     train_loss = 0.0
+    train_l1   = 0.0
+    train_lsd  = 0.0
 
     for x_b, y_b in train_loader:
         x_b = x_b.to(DEVICE)
@@ -216,13 +230,19 @@ for epoch in range(1, NUM_EPOCHS + 1):
 
         optimizer.zero_grad()
         pred = model(x_b)
-        loss = LOSS_FN(pred, y_b)
+        l1   = weighted_l1(pred, y_b)
+        lsd  = spectral_loss(pred, y_b)
+        loss = l1 + LAMBDA_SPEC * lsd
         loss.backward()
         optimizer.step()
 
         train_loss += loss.item()
+        train_l1   += l1.item()
+        train_lsd  += lsd.item()
 
     train_loss /= len(train_loader)
+    train_l1   /= len(train_loader)
+    train_lsd  /= len(train_loader)
 
     # --------------------------------------------------------
     # VALIDATION
@@ -253,7 +273,7 @@ for epoch in range(1, NUM_EPOCHS + 1):
     else:
         epochs_no_improve += 1
 
-    print(f"{epoch:>6} {train_loss:>12.6f} {val_loss:>12.6f} {'*' if is_best else ''}")
+    print(f"{epoch:>6} {train_loss:>12.6f} {train_l1:>10.4f} {train_lsd:>10.4f} {val_loss:>12.6f} {'*' if is_best else ''}")
 
     # --------------------------------------------------------
     # CHECKPOINTING

@@ -11,6 +11,8 @@ Predicting where and how much it will rain 30 minutes ahead is a core challenge 
 
 Convolutional architectures are well-suited for this task because radar composites are inherently spatial: precipitation patterns have local structure and translational regularity that convolutions can exploit efficiently. The U-Net in particular combines an encoder branch — which progressively reduces spatial resolution while increasing feature depth to capture large-scale patterns — with a decoder branch that restores spatial resolution using skip connections from the encoder. This allows the model to simultaneously reason about broad precipitation systems and fine-scale local structure, which is critical for accurate spatial placement of rain at short lead times.
 
+This is a single-step model; temporal consistency is future work
+
 ---
 
 ## Approach
@@ -18,12 +20,14 @@ Convolutional architectures are well-suited for this task because radar composit
 | Component | Choice |
 |---|---|
 | Architecture | U-Net (encoder–decoder with skip connections) |
-| Input | 3 radar frames (log1p-scaled reflectivity), 501×371 px |
+| Input | 3 radar frames (log1p-scaled rain rate), 501×371 px |
 | Output | 1 predicted frame at +30 min |
 | Loss | Weighted L1 — upweights high-intensity pixels to counter class imbalance |
 | Optimizer | AdamW, lr=1e-4, weight decay=1e-4 |
 | Regularisation | BatchNorm + Dropout2d (0.1) + early stopping (patience=10) |
-| Augmentation | Random horizontal flip |
+
+
+The model is trained in log space to stabilize the heavy-tailed precipitation distribution, but weight the loss in physical space to ensure high-intensity events drive the gradients.
 
 The weighted loss is defined as:
 
@@ -31,8 +35,7 @@ The weighted loss is defined as:
 L = mean( (1 + R) * |pred - target| )
 ```
 
-where `R = expm1(target)` is the rain rate in mm/10min, so heavy rain events contribute more to the gradient.
-
+where `pred` and `target` are in `log1p(mm/10min)` space, and `R = expm1(target)` converts the target back to rain rate in `mm/10min`. This gives dry/light-rain pixels a baseline weight of 1, while progressively increasing the penalty for errors in heavier precipitation.
 ---
 
 ## Repository structure
