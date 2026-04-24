@@ -1,6 +1,7 @@
 # Precipitation Nowcasting with U-Net
 
-Deep learning model for radar-based precipitation nowcasting at **+30 min lead time** over Switzerland, trained on MeteoSwiss radar composites.
+Short-term precipitation forecasting with deep learning — 30-minute radar extrapolation for Switzerland, trained on MeteoSwiss radar composites
+
 
 ---
 
