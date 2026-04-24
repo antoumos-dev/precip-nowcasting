@@ -21,7 +21,7 @@ Convolutional architectures are well-suited for this task because radar composit
 | Input | 3 radar frames (log1p-scaled reflectivity), 501×371 px |
 | Output | 1 predicted frame at +30 min |
 | Loss | Weighted L1 — upweights high-intensity pixels to counter class imbalance |
-| Optimizer | Adam, lr=1e-4, weight decay=1e-4 |
+| Optimizer | AdamW, lr=1e-4, weight decay=1e-4 |
 | Regularisation | BatchNorm + Dropout2d (0.1) + early stopping (patience=10) |
 | Augmentation | Random horizontal flip |
 
@@ -56,17 +56,23 @@ where `R = expm1(target)` is the rain rate in mm/10min, so heavy rain events con
 
 ## Results
 
-Evaluation on held-out test set (`RUN_NAME = wl1_linear`):
+Evaluation on held-out test set. Best configuration: **weighted L1 loss** with linear rain-rate penalty (`weight = 1 + R`, where R is mm/10min) — heavier rainfall events receive proportionally higher loss weight to counter the class imbalance between rainy and dry pixels. Switching to plain MSE produced blurrier predictions and worse skill scores at moderate-to-high intensities. Persistence = last input frame held constant as the +30 min forecast.
 
-| Metric | Value |
-|---|---|
-| MAE (mm/10min) | — |
-| RMSE (mm/10min) | — |
-| CSI @ 0.1 mm/10min | — |
-| CSI @ 0.5 mm/10min | — |
-| CSI @ 1.0 mm/10min | — |
+| Metric | U-Net | Persistence |
+|---|---|---|
+| MAE (mm/10min) | — | — |
+| RMSE (mm/10min) | — | — |
+| CSI @ 0.1 mm/10min | — | — |
+| CSI @ 0.5 mm/10min | — | — |
+| CSI @ 1.0 mm/10min | — | — |
+| FSS @ 0.1 mm/10min, 8 px | — | — |
+| FSS @ 0.1 mm/10min, 32 px | — | — |
+| FSS @ 0.5 mm/10min, 8 px | — | — |
+| FSS @ 0.5 mm/10min, 32 px | — | — |
+| FSS @ 1.0 mm/10min, 8 px | — | — |
+| FSS @ 1.0 mm/10min, 32 px | — | — |
 
-> Fill in after running `nowcast_05_test.py` and add a sample figure to `figures/`.
+Preliminary results in figures/ show the model captures the overall spatial structure of precipitation fields, but predictions are smoother than observed — fine-scale intensity peaks are underestimated, a common trait of pixel-wise loss functions.
 
 ---
 
@@ -89,11 +95,11 @@ See `nowcast_01_preprocessing.ipynb` and `nowcast_02_enrich_split.ipynb` for how
 
 ### 3. Train
 
-Edit `RUN_NAME` in `nowcast_04_train_all.py`, then:
+Edit `RUN_NAME` in `nowcast_04_train.py`, then:
 
 ```bash
 # Locally
-python nowcast_04_train_all.py
+python nowcast_04_train.py
 
 # On a SLURM cluster (submit from project root)
 sbatch scripts/run_train.sh
