@@ -17,10 +17,11 @@ LOG_DIR   = _HERE / "logs"
 CKPT_DIR.mkdir(exist_ok=True, parents= True)
 LOG_DIR.mkdir(exist_ok=True, parents = True)
 
-BATCH_SIZE  = 8
-NUM_EPOCHS  = 50
-LR          = 1e-4
-NUM_WORKERS = 4
+BATCH_SIZE      = 8
+NUM_EPOCHS      = 50
+LR              = 1e-4
+NUM_WORKERS     = 4
+WEIGHT_EXPONENT = 1   # >1 = more focus on heavy rain, <1 = less
 DEVICE      = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 RUN_NAME    = "wl1_linear"    # change per run, e.g. "mse_baseline", "wmse_linear", "wl1_linear"
 
@@ -169,18 +170,18 @@ class UNet(nn.Module):
         return x[:, :, 5:506, 6:377]  # crop back to (501, 371)
 
 def weighted_mse(pred, target):
-    w = (1.0 + torch.expm1(target)) ** 1
+    w = (1.0 + torch.expm1(target)) ** WEIGHT_EXPONENT
     return (w * (pred - target) ** 2).mean()
 
 def weighted_l1(pred, target):
     # L1 penalises residuals linearly → less regression-to-mean → sharper predictions
-    w = (1.0 + torch.expm1(target)) ** 1
+    w = (1.0 + torch.expm1(target)) ** WEIGHT_EXPONENT
     return (w * torch.abs(pred - target)).mean()
 
 LOSS_FN = weighted_l1   # swap to weighted_mse to revert
 
 model     = UNet(features=[32, 64, 128, 256]).to(DEVICE)
-optimizer = torch.optim.Adam(model.parameters(), lr=LR, weight_decay=1e-4)
+optimizer = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=1e-4)
 
 print(f"Parameters: {sum(p.numel() for p in model.parameters()):,}")
 
