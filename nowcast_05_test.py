@@ -6,6 +6,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, TensorDataset
 from pathlib import Path
 import matplotlib.pyplot as plt
+from scipy.ndimage import uniform_filter
 
 # ============================================================
 # CONFIG
@@ -15,7 +16,7 @@ DATA_DIR  = _HERE / "radar_data"
 CKPT_DIR  = _HERE / "checkpoints"
 OUT_DIR   = _HERE / "test_output"
 
-RUN_NAME   = "wl1_linear"    # must match training run
+RUN_NAME   = "wmse_linear"    # must match training run
 BATCH_SIZE = 8
 DEVICE     = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 PAD        = (6, 7, 5, 6)
@@ -154,19 +155,52 @@ for thr in thresholds:
     csi  = tp / (tp + fp + fn) if (tp + fp + fn) > 0 else float("nan")
     csi_results[thr] = csi
 
-print(f"\nMAE  (mm/10min): {mae:.4f}")
-print(f"RMSE (mm/10min): {rmse:.4f}")
+print(f"\nMAE  (mm/10min): {mae:.2f}")
+print(f"RMSE (mm/10min): {rmse:.2f}")
 for thr, csi in csi_results.items():
-    print(f"CSI  @{thr}mm/10min: {csi:.4f}")
+    print(f"CSI  @{thr}mm/10min: {csi:.2f}")
 
-pd.DataFrame({
-    "run":        [RUN_NAME],
-    "mae":        [mae],
-    "rmse":       [rmse],
-    "csi_0.1mmh": [csi_results[0.1]],
-    "csi_0.5mmh": [csi_results[0.5]],
-    "csi_1.0mmh": [csi_results[1.0]],
-}).to_csv(RUN_OUT_DIR / f"metrics_{RUN_NAME}.csv", index=False)
+# ============================================================
+# FSS (Fractions Skill Score)
+# ============================================================
+def fss_score(pred, obs, threshold, scale_px):
+    """FSS for a single 2-D field. scale_px is the neighbourhood half-width."""
+    pred_bin  = (pred >= threshold).astype(np.float32)
+    obs_bin   = (obs  >= threshold).astype(np.float32)
+    size      = 2 * scale_px + 1
+    # box-average of binary field = fraction of rainy pixels in each neighbourhood window
+    pred_frac = uniform_filter(pred_bin, size=size, mode="constant")
+    obs_frac  = uniform_filter(obs_bin,  size=size, mode="constant")
+    fbs       = np.mean((pred_frac - obs_frac) ** 2)
+    fbs_worst = np.mean(pred_frac ** 2) + np.mean(obs_frac ** 2)
+    return 1.0 - fbs / fbs_worst if fbs_worst > 0 else float("nan")
+
+FSS_THRESHOLDS = [0.1, 0.5, 1.0]   # mm/10min
+FSS_SCALES_PX  = [8, 32]            # neighbourhood radii in pixels
+
+fss_results = {thr: {} for thr in FSS_THRESHOLDS}
+for thr in FSS_THRESHOLDS:
+    for s in FSS_SCALES_PX:
+        scores = [
+            fss_score(preds_mmh[i, 0], trues_mmh[i, 0], thr, s)
+            for i in range(len(preds_mmh))
+        ]
+        fss_results[thr][s] = np.nanmean(scores)
+
+print("\nFSS:")
+for thr in FSS_THRESHOLDS:
+    for s in FSS_SCALES_PX:
+        print(f"  FSS @{thr}mm/10min scale={s}px: {fss_results[thr][s]:.2f}")
+
+rows = (
+    [{"run": RUN_NAME, "metric": "mae",  "threshold_mm": None, "scale_px": None, "value": round(mae,  2)},
+     {"run": RUN_NAME, "metric": "rmse", "threshold_mm": None, "scale_px": None, "value": round(rmse, 2)}]
+  + [{"run": RUN_NAME, "metric": "csi",  "threshold_mm": thr,  "scale_px": None, "value": round(csi_results[thr], 2)}
+     for thr in [0.1, 0.5, 1.0]]
+  + [{"run": RUN_NAME, "metric": "fss",  "threshold_mm": thr,  "scale_px": s,    "value": round(fss_results[thr][s], 2)}
+     for thr in FSS_THRESHOLDS for s in FSS_SCALES_PX]
+)
+pd.DataFrame(rows).to_csv(RUN_OUT_DIR / f"metrics_{RUN_NAME}.csv", index=False)
 
 # ============================================================
 # PLOT: first 4 test cases
@@ -186,3 +220,51 @@ for i in range(n_plot):
 plt.tight_layout()
 plt.savefig(RUN_OUT_DIR / f"test_cases_{RUN_NAME}.png", dpi=150)
 print(f"\nPlot saved to {RUN_OUT_DIR / f'test_cases_{RUN_NAME}.png'}")
+
+
+
+# ============================================================
+# POWER SPECTRA
+# ============================================================
+def radial_power_spectrum(field):
+    """
+    Compute the azimuthally-averaged 1-D power spectrum of a 2-D field.
+    Returns (wavenumber_bins, mean_power_per_bin).
+    """
+    ny, nx  = field.shape
+    f2d     = np.fft.fft2(field)
+    psd2d   = (np.abs(np.fft.fftshift(f2d)) ** 2) / (ny * nx)
+    ky      = np.fft.fftshift(np.fft.fftfreq(ny))
+    kx      = np.fft.fftshift(np.fft.fftfreq(nx))
+    KX, KY  = np.meshgrid(kx, ky)
+    K       = np.sqrt(KX ** 2 + KY ** 2)
+    k_bins  = np.linspace(0, K.max(), 64)
+    k_mid   = 0.5 * (k_bins[:-1] + k_bins[1:])
+    power   = np.array([
+        psd2d[(K >= k_bins[i]) & (K < k_bins[i + 1])].mean()
+        for i in range(len(k_bins) - 1)
+    ])
+    return k_mid, power
+
+# average spectra over all test samples
+k_ref, _ = radial_power_spectrum(trues_mmh[0, 0])
+psd_obs  = np.zeros_like(k_ref)
+psd_pred = np.zeros_like(k_ref)
+for i in range(len(trues_mmh)):
+    _, p_obs  = radial_power_spectrum(trues_mmh[i, 0])
+    _, p_pred = radial_power_spectrum(preds_mmh[i, 0])
+    psd_obs  += p_obs
+    psd_pred += p_pred
+psd_obs  /= len(trues_mmh)
+psd_pred /= len(preds_mmh)
+
+fig, ax = plt.subplots(figsize=(6, 4))
+ax.loglog(k_ref, psd_obs,  label="Observed")
+ax.loglog(k_ref, psd_pred, label="Predicted", linestyle="--")
+ax.set_xlabel("Wavenumber (cycles / pixel)")
+ax.set_ylabel("Power spectral density")
+ax.set_title(f"Radial Power Spectrum — {RUN_NAME}")
+ax.legend()
+plt.tight_layout()
+plt.savefig(RUN_OUT_DIR / f"power_spectrum_{RUN_NAME}.png", dpi=150)
+print(f"Power spectrum plot saved to {RUN_OUT_DIR / f'power_spectrum_{RUN_NAME}.png'}")
